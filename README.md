@@ -14,6 +14,6 @@ This project demonstrates a **Blue/Green deployment strategy** using **Nginx ups
 
 ---
 
-**Author**: Macdonald Daniel
-**Purpose**: Demonstrate resilient Blue/Green deployments with Nginx auto-failover.
+**Author:** Macdonald Daniel
+**Purpose:** Demonstrate resilient Blue/Green deployments with Nginx auto-failover.
 
