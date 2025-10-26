@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Blue Service - Primary by default
+  app_blue:
+    image: ${BLUE_IMAGE}
+    container_name: app_blue
+    environment:
+      - PORT=${PORT:-3000}
+      - APP_POOL=blue
+      - RELEASE_ID=${RELEASE_ID_BLUE}
+    ports:
+      - "8081:${PORT:-3000}"  # Expose for direct chaos triggers
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:${PORT:-3000}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 10s
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # Green Service - Backup by default
+  app_green:
+    image: ${GREEN_IMAGE}
+    container_name: app_green
+    environment:
+      - PORT=${PORT:-3000}
+      - APP_POOL=green
+      - RELEASE_ID=${RELEASE_ID_GREEN}
+    ports:
+      - "8082:${PORT:-3000}"  # Expose for direct chaos triggers
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:${PORT:-3000}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 10s
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "8080:80"  # Public endpoint
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+    environment:
+      - ACTIVE_POOL=${ACTIVE_POOL}
+      - PORT=${PORT:-3000}
+    depends_on:
+      - app_blue
+      - app_green
+    networks:
+      - app_network
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+networks:
+  app_network:
+    driver: bridge
