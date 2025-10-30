@@ -193,11 +193,12 @@ def send_slack_alert(alert_type: str, message: str, details: Dict[str, Any]) -> 
         print(f"[MAINTENANCE MODE] Alert suppressed: {alert_type}")
         return False
 
-    # Check cooldown
+    # Check cooldown for all alert types to prevent spam
     now = datetime.now()
     last_alert = last_alert_times.get(alert_type, datetime.min)
     cooldown_delta = timedelta(seconds=ALERT_COOLDOWN_SEC)
 
+    # Apply cooldown to all alert types including error_rate
     if now - last_alert < cooldown_delta:
         remaining = (last_alert + cooldown_delta - now).total_seconds()
         print(f"[COOLDOWN] Alert {alert_type} suppressed (cooldown: {remaining:.0f}s remaining)")
@@ -488,7 +489,11 @@ def check_error_rate() -> None:
     """
     Check if error rate exceeds threshold over the sliding window.
     """
-    if len(request_window) < WINDOW_SIZE:
+    # Require minimum 10 requests before checking error rate
+    # This is ~5% of the default 200-request window
+    MIN_REQUESTS_FOR_CHECK = 10
+
+    if len(request_window) < MIN_REQUESTS_FOR_CHECK:
         # Not enough data yet
         return
 
