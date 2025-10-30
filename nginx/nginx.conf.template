@@ -17,7 +17,19 @@ http {
                     '"$http_user_agent" upstream: $upstream_addr '
                     'upstream_status: $upstream_status';
 
-    access_log /var/log/nginx/access.log main;
+    # Enhanced logging format for observability - captures pool, release, and detailed upstream metrics
+    log_format detailed 'pool=$upstream_http_x_app_pool '
+                        'release=$upstream_http_x_release_id '
+                        'status=$status '
+                        'upstream_status=$upstream_status '
+                        'upstream=$upstream_addr '
+                        'request_time=$request_time '
+                        'upstream_response_time=$upstream_response_time '
+                        'method=$request_method '
+                        'uri=$request_uri '
+                        'time=$time_iso8601';
+
+    access_log /var/log/nginx/access.log detailed;
 
     # Performance settings
     sendfile on;

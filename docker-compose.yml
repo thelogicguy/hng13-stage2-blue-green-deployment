@@ -50,6 +50,7 @@ services:
     volumes:
       - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+      - nginx_logs:/var/log/nginx  # Shared log volume
     environment:
       - ACTIVE_POOL=${ACTIVE_POOL}
       - PORT=${PORT:-3000}
@@ -61,6 +62,34 @@ services:
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
 
+  # Alert Watcher Service - Monitors logs and sends Slack alerts
+  alert_watcher:
+    image: python:3.11-slim
+    container_name: alert_watcher
+    volumes:
+      - ./watcher.py:/app/watcher.py:ro
+      - ./requirements.txt:/app/requirements.txt:ro
+      - nginx_logs:/var/log/nginx:ro  # Read-only access to Nginx logs
+      - watcher_state:/app/state  # Persistent state for maintenance mode
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - ERROR_RATE_THRESHOLD=${ERROR_RATE_THRESHOLD:-2}
+      - WINDOW_SIZE=${WINDOW_SIZE:-200}
+      - ALERT_COOLDOWN_SEC=${ALERT_COOLDOWN_SEC:-300}
+      - MAINTENANCE_MODE=${MAINTENANCE_MODE:-false}
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt && python -u watcher.py"
+    depends_on:
+      - nginx
+    networks:
+      - app_network
+    restart: unless-stopped
+
 networks:
   app_network:
     driver: bridge
+
+volumes:
+  nginx_logs:  # Shared volume for Nginx access logs
+  watcher_state:  # Persistent storage for watcher state

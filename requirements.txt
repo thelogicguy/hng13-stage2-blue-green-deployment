@@ -1,0 +1,5 @@
+# Python dependencies for alert_watcher service
+# Used to monitor Nginx logs and send Slack alerts
+
+# HTTP library for sending Slack webhook requests
+requests>=2.31.0
