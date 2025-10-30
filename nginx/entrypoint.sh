@@ -31,6 +31,14 @@ envsubst '${ACTIVE_POOL} ${BACKUP_POOL} ${PORT}' \
 echo "=== Generated Nginx Config ==="
 cat /etc/nginx/nginx.conf
 
+# Remove default symlinks and create actual log files
+# This allows the alert_watcher to tail the logs from the shared volume
+echo "=== Setting up log files ==="
+rm -f /var/log/nginx/access.log /var/log/nginx/error.log
+touch /var/log/nginx/access.log /var/log/nginx/error.log
+chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log
+echo "Log files created successfully"
+
 # Test the configuration
 nginx -t
 

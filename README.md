@@ -289,41 +289,138 @@ See **[runbook.md](runbook.md)** for detailed:
 
 ## 🐛 Troubleshooting
 
-**No alerts in Slack:**
+### Common Issues & Solutions
+
+#### 1. No alerts in Slack
+
+**Symptoms:** Alert system running but no Slack notifications received.
+
+**Solution:**
 ```bash
-# Check watcher is running
+# Step 1: Check watcher is running
 docker ps | grep alert_watcher
 
-# Check watcher logs for errors
+# Step 2: Check watcher logs for errors
 docker logs alert_watcher
 
-# Verify webhook URL is correct
+# Step 3: Verify webhook URL is configured
 docker exec alert_watcher env | grep SLACK_WEBHOOK_URL
 
-# Test webhook manually
+# Step 4: Test webhook manually (replace with your actual webhook URL)
 curl -X POST -H 'Content-Type: application/json' \
   -d '{"text":"Test alert"}' \
   YOUR_SLACK_WEBHOOK_URL
+
+# Expected response: "ok"
+# If you get "no_service", your webhook URL is invalid/expired
+
+# Step 5: If webhook is invalid, update .env with new webhook URL
+# Then restart: docker compose restart alert_watcher
 ```
 
-**Watcher not processing logs:**
-```bash
-# Check if logs are being written
-docker exec nginx_proxy tail /var/log/nginx/access.log
+#### 2. Watcher not processing logs (Critical Fix)
 
-# Restart watcher
+**Symptoms:** Watcher running but not detecting failovers or errors.
+
+**Root Cause:** Nginx logs may be symlinked to `/dev/stdout` instead of actual files, preventing the watcher from reading them via the shared volume.
+
+**Solution:**
+```bash
+# Step 1: Check if logs are actual files or symlinks
+docker exec nginx_proxy ls -la /var/log/nginx/
+# Bad: lrwxrwxrwx ... access.log -> /dev/stdout  (symlink)
+# Good: -rw-r--r-- ... access.log                 (regular file)
+
+# Step 2: If symlinks, check entrypoint.sh has the fix
+cat nginx/entrypoint.sh | grep -A3 "Remove default symlinks"
+
+# The fix should include:
+# rm -f /var/log/nginx/access.log /var/log/nginx/error.log
+# touch /var/log/nginx/access.log /var/log/nginx/error.log
+# chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log
+
+# Step 3: Restart nginx to apply the fix
+docker compose restart nginx alert_watcher
+
+# Step 4: Verify logs are now regular files
+docker exec nginx_proxy ls -la /var/log/nginx/
+
+# Step 5: Generate traffic and check watcher detects it
+curl http://localhost:8080/version
+docker logs alert_watcher --tail 10
+# You should see: [INIT] Initial pool detected: blue
+```
+
+#### 3. alert_watcher container not running
+
+**Symptoms:** `docker ps` doesn't show alert_watcher.
+
+**Solution:**
+```bash
+# Start the watcher service
+docker compose up -d alert_watcher
+
+# If it fails, check logs
+docker compose logs alert_watcher
+
+# Common causes:
+# - Missing Python dependencies (should auto-install)
+# - Invalid SLACK_WEBHOOK_URL format
+# - Port conflicts
+
+# Restart all services if needed
+docker compose down
+docker compose up -d
+```
+
+#### 4. Too many false positive alerts
+
+**Symptoms:** Receiving alerts for minor, transient issues.
+
+**Solution:**
+```bash
+# Adjust thresholds in .env
+ERROR_RATE_THRESHOLD=5      # Increase from 2 to 5 (less sensitive)
+WINDOW_SIZE=500             # Increase from 200 to 500 (larger sample)
+ALERT_COOLDOWN_SEC=600      # Increase from 300 to 600 (10 min cooldown)
+
+# Restart watcher to apply changes
 docker compose restart alert_watcher
 ```
 
-**Too many false positives:**
-```bash
-# Increase thresholds in .env
-ERROR_RATE_THRESHOLD=5
-WINDOW_SIZE=500
-ALERT_COOLDOWN_SEC=600
+#### 5. Invalid webhook URL error
 
-# Restart watcher
-docker compose restart alert_watcher
+**Symptoms:** Webhook test returns "invalid_token" or "no_service".
+
+**Solution:**
+1. Your Slack webhook URL has expired or been revoked
+2. Go to https://api.slack.com/apps
+3. Select your app → "Incoming Webhooks"
+4. Generate a new webhook URL
+5. Update `.env` with the new URL
+6. Restart: `docker compose restart alert_watcher`
+
+#### 6. Containers not starting
+
+**Symptoms:** Services fail to start or immediately exit.
+
+**Solution:**
+```bash
+# Check for port conflicts
+sudo lsof -i :8080  # Nginx public port
+sudo lsof -i :8081  # Blue pool
+sudo lsof -i :8082  # Green pool
+
+# View service logs
+docker compose logs
+
+# Clean restart
+docker compose down
+docker compose up -d
+
+# If still failing, rebuild
+docker compose down
+docker compose up -d --build
 ```
 
 ---
@@ -332,19 +429,29 @@ docker compose restart alert_watcher
 
 ```
 .
-├── docker-compose.yml          # Service orchestration
-├── .env                        # Environment configuration
-├── .env.example                # Configuration template
+├── docker-compose.yml                          # Service orchestration
+├── .env                                        # Environment configuration (not in git)
+├── .env.example                                # Configuration template
+├── .gitignore                                  # Git ignore patterns
+│
 ├── nginx/
-│   ├── nginx.conf.template     # Nginx config with enhanced logging
-│   └── entrypoint.sh           # Nginx startup script
-├── watcher.py                  # Log monitoring & alerting service
-├── requirements.txt            # Python dependencies
-├── test_alerts.sh              # Automated test suite
-├── runbook.md                  # Operator response guide
-├── DECISION.md                 # Architecture decisions
-└── README.md                   # This file
+│   ├── nginx.conf.template                     # Nginx config with enhanced logging
+│   └── entrypoint.sh                           # Nginx startup script (with log fix)
+│
+├── watcher.py                                  # Log monitoring & alerting service
+├── requirements.txt                            # Python dependencies (requests)
+├── test_alerts.sh                              # Automated test suite
+│
+├── README.md                                   # This file - Quick start guide
+├── runbook.md                                  # Operator response procedures
+├── DECISION.md                                 # Architecture decisions & rationale
+└── Blue-Green_Deployment_Documentation.docx    # Complete documentation (Word)
 ```
+
+**Key File Changes:**
+- `nginx/entrypoint.sh` - Fixed to create actual log files instead of symlinks (critical for monitoring)
+- `watcher.py` - Real-time log monitoring with Slack integration
+- `docker-compose.yml` - Orchestrates all 4 services with shared volumes for log access
 
 ---
 
@@ -409,11 +516,46 @@ Timestamp: 2025-10-30 14:35:18 UTC
 
 ---
 
+## 🔧 Recent Improvements & Fixes
+
+### Critical Fix: Nginx Log File Configuration (2025-10-30)
+
+**Issue:** The alert_watcher service was not detecting failovers or sending Slack notifications even though the webhook URL was valid and the watcher was running.
+
+**Root Cause:** The default nginx:alpine Docker image creates symbolic links for `/var/log/nginx/access.log` → `/dev/stdout`. While this allows viewing logs via `docker logs`, it prevented the alert_watcher container from reading the logs through the shared volume.
+
+**Fix Implemented:** Modified `nginx/entrypoint.sh` to:
+1. Remove the default symlinks on container startup
+2. Create actual log files with proper permissions
+3. Ensure logs are written to real files accessible via shared volume
+
+```bash
+# Added to nginx/entrypoint.sh
+rm -f /var/log/nginx/access.log /var/log/nginx/error.log
+touch /var/log/nginx/access.log /var/log/nginx/error.log
+chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log
+```
+
+**Verification:**
+```bash
+# Check logs are regular files (not symlinks)
+docker exec nginx_proxy ls -la /var/log/nginx/
+# Should show: -rw-r--r-- (not lrwxrwxrwx)
+
+# Verify watcher is processing logs
+docker logs alert_watcher | grep "INIT"
+# Should show: [INIT] Initial pool detected: blue
+```
+
+**Impact:** This fix enables the complete observability pipeline, allowing real-time monitoring and Slack notifications for all alert types (failovers, high error rates, and recovery events).
+
+---
+
 ## 📖 Additional Documentation
 
-- **[runbook.md](runbook.md)** - Operator response procedures
-- **[DECISION.md](DECISION.md)** - Architecture decisions
-- **[IMPLEMENTATION.md](IMPLEMENTATION.md)** - Detailed implementation guide
+- **[runbook.md](runbook.md)** - Operator response procedures for each alert type
+- **[DECISION.md](DECISION.md)** - Architecture decisions and design rationale
+- **[Blue-Green_Deployment_Documentation.docx](Blue-Green_Deployment_Documentation.docx)** - Complete project documentation in Word format
 
 ---
 
